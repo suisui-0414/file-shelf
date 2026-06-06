@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:FileShelf}",
+            "name": "Debug FileShelf",
+            "target": "FileShelf",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug FileShelf"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:FileShelf}",
+            "name": "Release FileShelf",
+            "target": "FileShelf",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release FileShelf"
+        }
+    ]
+}
