@@ -3,7 +3,7 @@ import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
-    private var shelfWindow: NSPanel?
+    private var shelfWindow: ShelfPanel?
     let viewModel = ShelfViewModel()
 
     private var dragMonitors: [Any] = []
@@ -13,7 +13,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         setupShelfWindow()
         startDragMonitoring()
-        shelfWindow?.orderFrontRegardless()
+        shelfWindow?.makeKeyAndOrderFront(nil)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -31,7 +31,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupShelfWindow() {
         let hostingView = NSHostingView(rootView: ContentView(viewModel: viewModel))
 
-        let panel = NSPanel(
+        let panel = ShelfPanel(
             contentRect: NSRect(x: 0, y: 0, width: 240, height: 400),
             styleMask: [.titled, .closable, .resizable, .nonactivatingPanel, .utilityWindow],
             backing: .buffered,
@@ -78,7 +78,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard pb.types?.contains(where: { fileTypes.contains($0) }) == true else { return }
 
             self.autoShowedShelf = true
-            DispatchQueue.main.async { self.shelfWindow?.orderFrontRegardless() }
+            DispatchQueue.main.async { self.shelfWindow?.makeKeyAndOrderFront(nil) }
         }
 
         let onUp = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
@@ -100,5 +100,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+}
+
+class ShelfPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // Escape
+            orderOut(nil)
+        } else {
+            super.keyDown(with: event)
+        }
     }
 }
