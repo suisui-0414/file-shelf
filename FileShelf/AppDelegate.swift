@@ -4,12 +4,17 @@ import SwiftUI
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var shelfWindow: ShelfPanel?
+    private var preferencesWindow: NSWindow?
     let viewModel = ShelfViewModel()
 
     private var dragMonitors: [Any] = []
     private var autoShowedShelf = false
     private var dwellTimer: Timer?
-    static let dwellInterval: TimeInterval = 0.5
+
+    private var dwellInterval: TimeInterval {
+        let v = UserDefaults.standard.double(forKey: "dwellInterval")
+        return v > 0 ? v : 0.5
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
@@ -27,8 +32,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         guard let button = statusItem?.button else { return }
         button.image = NSImage(systemSymbolName: "tray.and.arrow.down", accessibilityDescription: "FileShelf")
-        button.action = #selector(toggleShelf)
+        button.action = #selector(handleStatusItemClick)
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         button.target = self
+    }
+
+    @objc private func handleStatusItemClick(_ sender: NSStatusBarButton) {
+        guard let event = NSApp.currentEvent else { return }
+        if event.type == .rightMouseUp {
+            let menu = NSMenu()
+            menu.addItem(NSMenuItem(title: "設定...", action: #selector(openPreferences), keyEquivalent: ""))
+            menu.addItem(.separator())
+            menu.addItem(NSMenuItem(title: "FileShelf を終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""))
+            NSMenu.popUpContextMenu(menu, with: event, for: sender)
+        } else {
+            toggleShelf()
+        }
+    }
+
+    @objc private func openPreferences() {
+        if preferencesWindow == nil {
+            let hostingView = NSHostingView(rootView: PreferencesView())
+            hostingView.sizingOptions = .intrinsicContentSize
+
+            let window = NSWindow(
+                contentRect: .zero,
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "FileShelf 設定"
+            window.contentView = hostingView
+            window.isReleasedWhenClosed = false
+            window.center()
+            preferencesWindow = window
+        }
+        preferencesWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func setupShelfWindow() {
@@ -62,7 +102,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if panel.isVisible {
             panel.orderOut(nil)
         } else {
-            panel.orderFrontRegardless()
+            panel.makeKeyAndOrderFront(nil)
         }
     }
 
@@ -75,7 +115,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let onDrag = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { [weak self] _ in
             guard let self, !self.autoShowedShelf else { return }
 
-            // ファイルドラッグでなければタイマーをキャンセル
             let pb = NSPasteboard(name: .drag)
             let fileTypes: [NSPasteboard.PasteboardType] = [.fileURL, .init("NSFilenamesPboardType")]
             guard pb.types?.contains(where: { fileTypes.contains($0) }) == true else {
@@ -83,11 +122,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
-            // マウスが動くたびにタイマーをリセット
-            // 0.5秒間イベントが来なければ「停止」と判定して開く
             self.dwellTimer?.invalidate()
             self.dwellTimer = Timer.scheduledTimer(
-                withTimeInterval: AppDelegate.dwellInterval,
+                withTimeInterval: self.dwellInterval,
                 repeats: false
             ) { [weak self] _ in
                 guard let self, !self.autoShowedShelf else { return }
