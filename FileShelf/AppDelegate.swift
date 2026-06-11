@@ -8,6 +8,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var dragMonitors: [Any] = []
     private var autoShowedShelf = false
+    private var dwellTimer: Timer?
+    static let dwellInterval: TimeInterval = 0.5
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
@@ -17,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        dwellTimer?.invalidate()
         dragMonitors.forEach { NSEvent.removeMonitor($0) }
     }
 
@@ -65,37 +68,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startDragMonitoring() {
         let onDown = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
+            self?.dwellTimer?.invalidate()
             self?.autoShowedShelf = false
         }
 
         let onDrag = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { [weak self] _ in
             guard let self, !self.autoShowedShelf else { return }
-            guard self.isAtScreenEdge(NSEvent.mouseLocation) else { return }
 
-            // ドラッグペーストボードにファイルURLが含まれているときだけ開く
+            // ファイルドラッグでなければタイマーをキャンセル
             let pb = NSPasteboard(name: .drag)
             let fileTypes: [NSPasteboard.PasteboardType] = [.fileURL, .init("NSFilenamesPboardType")]
-            guard pb.types?.contains(where: { fileTypes.contains($0) }) == true else { return }
+            guard pb.types?.contains(where: { fileTypes.contains($0) }) == true else {
+                self.dwellTimer?.invalidate()
+                return
+            }
 
-            self.autoShowedShelf = true
-            DispatchQueue.main.async { self.shelfWindow?.makeKeyAndOrderFront(nil) }
+            // マウスが動くたびにタイマーをリセット
+            // 0.5秒間イベントが来なければ「停止」と判定して開く
+            self.dwellTimer?.invalidate()
+            self.dwellTimer = Timer.scheduledTimer(
+                withTimeInterval: AppDelegate.dwellInterval,
+                repeats: false
+            ) { [weak self] _ in
+                guard let self, !self.autoShowedShelf else { return }
+                self.autoShowedShelf = true
+                self.shelfWindow?.makeKeyAndOrderFront(nil)
+            }
         }
 
         let onUp = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
+            self?.dwellTimer?.invalidate()
             self?.autoShowedShelf = false
         }
 
         dragMonitors = [onDown, onDrag, onUp].compactMap { $0 }
-    }
-
-    private func isAtScreenEdge(_ location: NSPoint) -> Bool {
-        NSScreen.screens.contains { screen in
-            let f = screen.frame
-            return location.x <= f.minX + 1
-                || location.x >= f.maxX - 1
-                || location.y <= f.minY + 1
-                || location.y >= f.maxY - 1
-        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
