@@ -8,6 +8,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let viewModel = ShelfViewModel()
 
     private var dragMonitors: [Any] = []
+    private var shortcutMonitors: [Any] = []
     private var autoShowedShelf = false
     private var dwellTimer: Timer?
 
@@ -17,16 +18,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UserDefaults.standard.register(defaults: [
+            "dwellEnabled":      true,
+            "dwellInterval":     0.5,
+            "shortcutEnabled":   false,
+            "shortcutKeyCode":   0,
+            "shortcutModifiers": 0,
+        ])
         setupStatusItem()
         setupShelfWindow()
         startDragMonitoring()
+        setupShortcutMonitoring()
         shelfWindow?.makeKeyAndOrderFront(nil)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         dwellTimer?.invalidate()
-        dragMonitors.forEach { NSEvent.removeMonitor($0) }
+        (dragMonitors + shortcutMonitors).forEach { NSEvent.removeMonitor($0) }
+        NotificationCenter.default.removeObserver(self)
     }
+
+    // MARK: - Status Item
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -50,19 +62,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc func toggleShelf() {
+        guard let panel = shelfWindow else { return }
+        if panel.isVisible {
+            panel.orderOut(nil)
+        } else {
+            panel.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    // MARK: - Preferences
+
     @objc private func openPreferences() {
         if preferencesWindow == nil {
-            let hostingView = NSHostingView(rootView: PreferencesView())
-            hostingView.sizingOptions = .intrinsicContentSize
-
             let window = NSWindow(
-                contentRect: .zero,
+                contentRect: NSRect(x: 0, y: 0, width: 400, height: 260),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false
             )
             window.title = "FileShelf 設定"
-            window.contentView = hostingView
+            window.contentView = NSHostingView(rootView: PreferencesView())
             window.isReleasedWhenClosed = false
             window.center()
             preferencesWindow = window
@@ -71,9 +91,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    // MARK: - Shelf Window
+
     private func setupShelfWindow() {
         let hostingView = NSHostingView(rootView: ContentView(viewModel: viewModel))
-
         let panel = ShelfPanel(
             contentRect: NSRect(x: 0, y: 0, width: 240, height: 400),
             styleMask: [.titled, .closable, .resizable, .nonactivatingPanel, .utilityWindow],
@@ -93,18 +114,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let y = screen.visibleFrame.maxY - panel.frame.height - 20
             panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
-
         shelfWindow = panel
     }
 
-    @objc private func toggleShelf() {
-        guard let panel = shelfWindow else { return }
-        if panel.isVisible {
-            panel.orderOut(nil)
-        } else {
-            panel.makeKeyAndOrderFront(nil)
-        }
-    }
+    // MARK: - Drag Monitoring
 
     private func startDragMonitoring() {
         let onDown = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
@@ -114,6 +127,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let onDrag = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { [weak self] _ in
             guard let self, !self.autoShowedShelf else { return }
+            guard UserDefaults.standard.bool(forKey: "dwellEnabled") else {
+                self.dwellTimer?.invalidate()
+                return
+            }
 
             let pb = NSPasteboard(name: .drag)
             let fileTypes: [NSPasteboard.PasteboardType] = [.fileURL, .init("NSFilenamesPboardType")]
@@ -123,10 +140,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             self.dwellTimer?.invalidate()
-            self.dwellTimer = Timer.scheduledTimer(
-                withTimeInterval: self.dwellInterval,
-                repeats: false
-            ) { [weak self] _ in
+            self.dwellTimer = Timer.scheduledTimer(withTimeInterval: self.dwellInterval, repeats: false) { [weak self] _ in
                 guard let self, !self.autoShowedShelf else { return }
                 self.autoShowedShelf = true
                 self.shelfWindow?.makeKeyAndOrderFront(nil)
@@ -141,10 +155,57 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         dragMonitors = [onDown, onDrag, onUp].compactMap { $0 }
     }
 
+    // MARK: - Shortcut Monitoring
+
+    private func setupShortcutMonitoring() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(refreshShortcutMonitors),
+            name: UserDefaults.didChangeNotification,
+            object: nil
+        )
+        refreshShortcutMonitors()
+    }
+
+    @objc private func refreshShortcutMonitors() {
+        shortcutMonitors.forEach { NSEvent.removeMonitor($0) }
+        shortcutMonitors.removeAll()
+
+        guard UserDefaults.standard.bool(forKey: "shortcutEnabled") else { return }
+        let keyCode = UInt16(UserDefaults.standard.integer(forKey: "shortcutKeyCode"))
+        guard keyCode != 0 else { return }
+
+        // 他アプリがアクティブな時（グローバル）
+        let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard self?.matchesShortcut(event) == true else { return }
+            DispatchQueue.main.async { self?.toggleShelf() }
+        }
+
+        // シェルフがキーウィンドウの時（ローカル）
+        let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard self?.matchesShortcut(event) == true else { return event }
+            DispatchQueue.main.async { self?.toggleShelf() }
+            return nil // イベントを消費
+        }
+
+        shortcutMonitors = [global, local].compactMap { $0 }
+    }
+
+    private func matchesShortcut(_ event: NSEvent) -> Bool {
+        let keyCode = UInt16(UserDefaults.standard.integer(forKey: "shortcutKeyCode"))
+        guard keyCode != 0 else { return false }
+        let rawMods = UInt(bitPattern: UserDefaults.standard.integer(forKey: "shortcutModifiers"))
+        let savedMods = NSEvent.ModifierFlags(rawValue: rawMods)
+        let eventMods = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        return event.keyCode == keyCode && eventMods == savedMods
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
 }
+
+// MARK: - ShelfPanel
 
 class ShelfPanel: NSPanel {
     override var canBecomeKey: Bool { true }
