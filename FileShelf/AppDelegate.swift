@@ -8,7 +8,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let viewModel = ShelfViewModel()
 
     private var dragMonitors: [Any] = []
-    private var shortcutMonitors: [Any] = []
     private var autoShowedShelf = false
     private var dwellTimer: Timer?
 
@@ -34,7 +33,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         dwellTimer?.invalidate()
-        (dragMonitors + shortcutMonitors).forEach { NSEvent.removeMonitor($0) }
+        dragMonitors.forEach { NSEvent.removeMonitor($0) }
+        HotKeyManager.shared.unregister()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -167,37 +167,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         refreshShortcutMonitors()
     }
 
+    // Carbon の RegisterEventHotKey を使うことで、アクセシビリティ権限なしに
+    // 他アプリにフォーカスがある状態でもショートカットを受け取れる
     @objc private func refreshShortcutMonitors() {
-        shortcutMonitors.forEach { NSEvent.removeMonitor($0) }
-        shortcutMonitors.removeAll()
+        HotKeyManager.shared.unregister()
 
         guard UserDefaults.standard.bool(forKey: "shortcutEnabled") else { return }
-        let keyCode = UInt16(UserDefaults.standard.integer(forKey: "shortcutKeyCode"))
+        let keyCode = UInt32(UserDefaults.standard.integer(forKey: "shortcutKeyCode"))
         guard keyCode != 0 else { return }
 
-        // 他アプリがアクティブな時（グローバル）
-        let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard self?.matchesShortcut(event) == true else { return }
-            DispatchQueue.main.async { self?.toggleShelf() }
-        }
-
-        // シェルフがキーウィンドウの時（ローカル）
-        let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard self?.matchesShortcut(event) == true else { return event }
-            DispatchQueue.main.async { self?.toggleShelf() }
-            return nil // イベントを消費
-        }
-
-        shortcutMonitors = [global, local].compactMap { $0 }
-    }
-
-    private func matchesShortcut(_ event: NSEvent) -> Bool {
-        let keyCode = UInt16(UserDefaults.standard.integer(forKey: "shortcutKeyCode"))
-        guard keyCode != 0 else { return false }
         let rawMods = UInt(bitPattern: UserDefaults.standard.integer(forKey: "shortcutModifiers"))
-        let savedMods = NSEvent.ModifierFlags(rawValue: rawMods)
-        let eventMods = event.modifierFlags.intersection([.command, .option, .control, .shift])
-        return event.keyCode == keyCode && eventMods == savedMods
+        let nsMods = NSEvent.ModifierFlags(rawValue: rawMods)
+        let carbonMods = HotKeyManager.carbonModifiers(from: nsMods)
+
+        HotKeyManager.shared.register(keyCode: keyCode, carbonModifiers: carbonMods) { [weak self] in
+            self?.toggleShelf()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
