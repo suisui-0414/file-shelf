@@ -29,8 +29,8 @@ macOS用のファイルシェルフアプリです。仮想デスクトップ（
 Xcode不要。macOS Command Line Tools のみで動作します。
 
 ```bash
-git clone https://github.com/yousuisui/FileShelf.git
-cd FileShelf
+git clone https://github.com/suisui-0414/file-shelf.git
+cd file-shelf
 ./build.sh
 ```
 

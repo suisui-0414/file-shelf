@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "FileShelf",
+    name: "file-shelf",
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
